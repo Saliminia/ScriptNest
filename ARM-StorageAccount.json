@@ -1,0 +1,52 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "storageSKU": {
+            "type": "string",
+            "defaultValue": "Standard_LRS",
+            "allowedValues": [
+                "Standard_LRS",
+                "Standard_GRS",
+                "Standard_RAGRS",
+                "Standard_ZRS",
+                "Premium_LRS",
+                "Premium_ZRS"
+            ],
+            "metadata": {
+                "description": "The SKU of the storage account."
+            }
+        },
+        "storageName": {
+            "type": "string",
+            "defaultValue": "learnexercise88322330",
+            "maxLength": 24,
+            "minLength": 3,
+            "metadata": {
+                "description": "The name of the storage account."
+            }
+        }
+    },
+    "functions": [],
+    "variables": {},
+    "resources": [{  
+        "name": "[parameters('storageName')]",
+        "type": "Microsoft.Storage/storageAccounts",
+        "apiVersion": "2023-05-01",
+        "tags": {
+            "displayName": "parameters('storageName')"
+        },
+        "location": "[resourceGroup().location]",
+        "kind": "StorageV2",
+        "sku": {
+            "name": "[parameters('storageSKU')]",
+            "tier": "[if(contains(parameters('storageSKU'), 'Premium'), 'Premium', 'Standard')]"
+        }
+    }],
+    "outputs": {
+        "storageEndpoint": {
+            "type": "object",
+            "value": "[reference('learnexercise88322330').primaryEndpoints]"
+        }
+    }
+}
