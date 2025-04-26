@@ -1,0 +1,199 @@
+create a route table:
+
+    az network route-table create \
+        --name publictable \
+        --resource-group "learn-b83bfdda-f3c3-40f3-a22e-fa79f203fa97" \
+        --disable-bgp-route-propagation false
+		
+--------------------------------------------------------------------------------------------------------
+create a custom route:
+
+    az network route-table route create \
+        --route-table-name publictable \
+        --resource-group "learn-b83bfdda-f3c3-40f3-a22e-fa79f203fa97" \
+        --name productionsubnet \
+        --address-prefix 10.0.1.0/24 \
+        --next-hop-type VirtualAppliance \
+        --next-hop-ip-address 10.0.2.4
+		
+--------------------------------------------------------------------------------------------------------
+create the vnet virtual network and the publicsubnet subnet:
+
+    az network vnet create \
+        --name vnet \
+        --resource-group "learn-b83bfdda-f3c3-40f3-a22e-fa79f203fa97" \
+        --address-prefixes 10.0.0.0/16 \
+        --subnet-name publicsubnet \
+        --subnet-prefixes 10.0.0.0/24
+		
+--------------------------------------------------------------------------------------------------------
+create the privatesubnet subnet:
+
+    az network vnet subnet create \
+        --name privatesubnet \
+        --vnet-name vnet \
+        --resource-group "learn-b83bfdda-f3c3-40f3-a22e-fa79f203fa97" \
+        --address-prefixes 10.0.1.0/24
+		
+		
+--------------------------------------------------------------------------------------------------------
+create the dmzsubnet subnet:
+
+    az network vnet subnet create \
+        --name dmzsubnet \
+        --vnet-name vnet \
+        --resource-group "learn-b83bfdda-f3c3-40f3-a22e-fa79f203fa97" \
+        --address-prefixes 10.0.2.0/24
+		
+--------------------------------------------------------------------------------------------------------
+show all of the subnets in the vnet virtual network:
+
+    az network vnet subnet list \
+        --resource-group "learn-b83bfdda-f3c3-40f3-a22e-fa79f203fa97" \
+        --vnet-name vnet \
+        --output table
+		
+--------------------------------------------------------------------------------------------------------
+associate the route table with the public subnet.
+
+    az network vnet subnet update \
+        --name publicsubnet \
+        --vnet-name vnet \
+        --resource-group "learn-b83bfdda-f3c3-40f3-a22e-fa79f203fa97" \
+        --route-table publictable
+		
+
+==================================================================================================
+---------------------------------------- NVA ----------------------------------------------------
+==================================================================================================
+create vm for nva:
+
+az vm create \
+    --resource-group "learn-b83bfdda-f3c3-40f3-a22e-fa79f203fa97" \
+    --name nva \
+    --vnet-name vnet \
+    --subnet dmzsubnet \
+    --image Ubuntu2204 \
+    --admin-username azureuser \
+    --admin-password <password>
+	
+--------------------------------------------------------------------------------------------------
+get the NVA network interface's ID:
+
+NICID=$(az vm nic list \
+    --resource-group "learn-b83bfdda-f3c3-40f3-a22e-fa79f203fa97" \
+    --vm-name nva \
+    --query "[].{id:id}" --output tsv)
+
+echo $NICID
+
+--------------------------------------------------------------------------------------------------
+get the NVA network interface's name:
+
+NICNAME=$(az vm nic show \
+    --resource-group "learn-b83bfdda-f3c3-40f3-a22e-fa79f203fa97" \
+    --vm-name nva \
+    --nic $NICID \
+    --query "{name:name}" --output tsv)
+
+echo $NICNAME
+
+--------------------------------------------------------------------------------------------------
+enable IP forwarding for the network interface:
+
+az network nic update --name $NICNAME --resource-group "learn-b83bfdda-f3c3-40f3-a22e-fa79f203fa97" --ip-forwarding true
+
+--------------------------------------------------------------------------------------------------
+to save the NVA virtual machine's public IP address to the variable NVAIP:
+
+NVAIP="$(az vm list-ip-addresses \
+    --resource-group "learn-b83bfdda-f3c3-40f3-a22e-fa79f203fa97" \
+    --name nva \
+    --query "[].virtualMachine.network.publicIpAddresses[*].ipAddress" \
+    --output tsv)"
+
+echo $NVAIP
+
+--------------------------------------------------------------------------------------------------
+ to enable IP forwarding within the NVA:
+ 
+ ssh -t -o StrictHostKeyChecking=no azureuser@$NVAIP 'sudo sysctl -w net.ipv4.ip_forward=1; exit;'
+ 
+ 
+==================================================================================================
+------------------------------Route traffic through the NVA --------------------------------------
+==================================================================================================
+code cloud-init.txt
+
+#cloud-config
+package_upgrade: true
+packages:
+   - inetutils-traceroute
+   
+---------------------------------------------------------------------------------------------------
+to create the public VM. Replace <password> with a suitable password for the azureuser account.
+
+az vm create \
+    --resource-group "learn-b83bfdda-f3c3-40f3-a22e-fa79f203fa97" \
+    --name public \
+    --vnet-name vnet \
+    --subnet publicsubnet \
+    --image Ubuntu2204 \
+    --admin-username azureuser \
+    --no-wait \
+    --custom-data cloud-init.txt \
+    --admin-password <password>
+	
+---------------------------------------------------------------------------------------------------
+to create the private VM. Replace <password> with a suitable password.
+
+az vm create \
+    --resource-group "learn-b83bfdda-f3c3-40f3-a22e-fa79f203fa97" \
+    --name private \
+    --vnet-name vnet \
+    --subnet privatesubnet \
+    --image Ubuntu2204 \
+    --admin-username azureuser \
+    --no-wait \
+    --custom-data cloud-init.txt \
+    --admin-password <password>
+	
+---------------------------------------------------------------------------------------------------
+Run the following Linux watch command to check that the VMs are running.
+
+watch -d -n 5 "az vm list \
+    --resource-group "learn-b83bfdda-f3c3-40f3-a22e-fa79f203fa97" \
+    --show-details \
+    --query '[*].{Name:name, ProvisioningState:provisioningState, PowerState:powerState}' \
+    --output table"
+	
+---------------------------------------------------------------------------------------------------
+to save the public IP address of the public VM to a variable named PUBLICIP:
+
+PUBLICIP="$(az vm list-ip-addresses \
+    --resource-group "learn-b83bfdda-f3c3-40f3-a22e-fa79f203fa97" \
+    --name public \
+    --query "[].virtualMachine.network.publicIpAddresses[*].ipAddress" \
+    --output tsv)"
+
+echo $PUBLICIP
+
+---------------------------------------------------------------------------------------------------
+to save the public IP address of the private VM to a variable named PRIVATEIP:
+
+PRIVATEIP="$(az vm list-ip-addresses \
+    --resource-group "learn-b83bfdda-f3c3-40f3-a22e-fa79f203fa97" \
+    --name private \
+    --query "[].virtualMachine.network.publicIpAddresses[*].ipAddress" \
+    --output tsv)"
+
+echo $PRIVATEIP
+
+---------------------------------------------------------------------------------------------------
+to trace the route from public to private.
+
+   ssh -t -o StrictHostKeyChecking=no azureuser@$PUBLICIP 'traceroute private --type=icmp; exit'
+
+to trace the route from private to public. 
+ 
+   ssh -t -o StrictHostKeyChecking=no azureuser@$PRIVATEIP 'traceroute public --type=icmp; exit'
